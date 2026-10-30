@@ -6,7 +6,7 @@ description: >-
   at Zerodha), runs a pre-market scan of daily closes (20-day closing-high
   breakout, bull flag, reclaimed the 20-day average, oversold, oversold bounce)
   and an opening-range breakout scan on 5-minute bars from the 9:15 AM IST open,
-  then writes trader/watchlist.json. Free Yahoo (.NS) data. Use when the user
+  then writes trader/watchlist.json. Free data: Yahoo (.NS), with NSE bhavcopy files and Upstox candles as automatic fallbacks. Use when the user
   says "scan NSE", "Indian market", "find me setups in India", "Nifty
   breakouts", "NSE opening range breakouts", "pre-market scan India", "build my
   NSE watchlist", or at the start of an Indian trading day.
@@ -20,17 +20,17 @@ and a setup on a chart is not a prediction. SEBI's own study found over 91% of
 individual F&O traders lost money in FY25; the scanner does not change that, and
 this is education and tooling, not SEBI-registered investment advice.
 
-`${CLAUDE_SKILL_DIR}` below is this skill's folder (where this SKILL.md lives).
+`/home/ankur/.agents/skills/trader-in-scanner` below is this skill's folder.
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scan.py" universe                      # -> trader/universe.txt
-python3 "${CLAUDE_SKILL_DIR}/scan.py" daily                         # before the open -> trader/watchlist.json
-python3 "${CLAUDE_SKILL_DIR}/scan.py" daily --symbols RELIANCE,TCS,M&M   # or --watchlist FILE, --limit 200
-python3 "${CLAUDE_SKILL_DIR}/scan.py" orb                           # after 9:35 AM IST -> trader/watchlist.json
-python3 "${CLAUDE_SKILL_DIR}/scan.py" orb --at 10:00                # cut the clock at 10:00 AM IST
+python3 "/home/ankur/.agents/skills/trader-in-scanner/scan.py" universe                      # -> trader/universe.txt
+python3 "/home/ankur/.agents/skills/trader-in-scanner/scan.py" daily                         # before the open -> trader/watchlist.json
+python3 "/home/ankur/.agents/skills/trader-in-scanner/scan.py" daily --symbols RELIANCE,TCS,M&M   # or --watchlist FILE, --limit 200
+python3 "/home/ankur/.agents/skills/trader-in-scanner/scan.py" orb                           # after 9:35 AM IST -> trader/watchlist.json
+python3 "/home/ankur/.agents/skills/trader-in-scanner/scan.py" orb --at 10:00                # cut the clock at 10:00 AM IST
 ```
 
-Flags: `--min-price 20`, `--min-volume` (daily 500,000, orb 0), `--or-minutes 15`,
+Flags: `--source auto|yahoo|bhavcopy` (daily) or `auto|yahoo|upstox` (orb), `--cache DIR`, `--min-price 20`, `--min-volume` (daily 500,000, orb 0), `--or-minutes 15`,
 `--max-confirm 200`, `--now "2026-10-28 10:00"` (IST), `--offline PATH`, `--no-write`,
 `--show N`, `--json`; `universe` also takes `--min-mis 2` and `--no-mis`. Exit code 0
 when the scan found something, 1 when it found nothing or could not run.
@@ -55,7 +55,7 @@ On 29 Oct 2026 that gave 2,368 EQ stocks, 167 dropped for ASM/GSM, 786 for no MI
 
 ## The daily scan (before the open, or after 3:30 PM)
 
-Yahoo spark returns closes for 20 symbols a request (`SYMBOL.NS`, `&` is URL-encoded). The five setups are computed from daily closes only:
+`--source auto` (default) asks Yahoo spark first (20 symbols a request, `SYMBOL.NS`, `&` URL-encoded). If Yahoo gives nothing it reads NSE's own end-of-day files instead (`--source bhavcopy` forces that): `sec_bhavdata_full_DDMMYYYY.csv` for the last 40 trading days, EQ series only, cached in `trader/cache/bhavcopy` (`--cache DIR`), so the first run takes about a minute and later runs seconds. Today's file appears in the evening, so a pre-open run uses the previous session's close. The five setups are computed from daily closes only:
 
 | setup | the rule on closes |
 | --- | --- |
@@ -79,9 +79,10 @@ The default last entry is 15:00 IST: Zerodha squares MIS positions off at 15:25 
 
 - IST is UTC+5:30 all year. Holidays are the `NSE_HOLIDAYS` table in `scan.py` (2026 only; NSE publishes 2027 in mid-December, so add it then, or 2027 weekdays count as open). The Muhurat session (Sun 8 Nov 2026, 14:20 to 15:30) is not modelled: the scanner treats it as closed.
 - Closing auction: from 3 Aug 2026 F&O stocks stop continuous trading at 15:15; from 7 Dec 2026 all stocks stop at 15:30 (secondary sources, circular not opened). It only matters for late-day bars.
-- Yahoo is free, unofficial and often answers 429. query2 first, query1 on a 429 or 5xx, one retry after 5 s. When no chart comes back the scan says so instead of printing "No setups". Yahoo's 5-minute history is about 60 days.
+- Yahoo is free, unofficial and often answers 429. query2 first, query1 on a 429 or 5xx, one retry after 5 s. When no chart comes back the scan says so instead of printing "No setups", and `--source auto` moves on to the fallback.
 - Partial results are said as partial: "Fetched 1,380 of 1,415 charts (35 failed or had no data)". Never round a partial scan up to "the whole market".
-- Fallbacks if Yahoo keeps refusing: Zerodha `get_historical_data` (needs a Kite login), Upstox keyless candles (unstable, untested here), TradingView's scanner (latest bar only, and its terms bar automated use).
+- **Opening-range fallback (`orb --source upstox`, or automatic):** Upstox's keyless historical-candle endpoint (1-minute only, 5-minute is rejected), turned into 5-minute bars with real highs and lows, so no stage 2. It is one request a symbol, about 0.4 s each: 8 symbols took 3 s, a 1,400-symbol universe would take roughly 10 minutes, so use `--symbols`, `--watchlist` (the daily hits) or `--limit`. Whether keyless access is intended or stable is unknown. Bars are built from the symbol's ISIN via EQUITY_L.csv.
+- Other fallbacks: Zerodha `get_historical_data` (needs a Kite login), TradingView's scanner (latest bar only, and its terms bar automated use).
 
 ## Steps
 

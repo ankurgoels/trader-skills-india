@@ -78,6 +78,9 @@ NSE_EQUITY_L = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 NSE_ASM = "https://www.nseindia.com/api/reportASM"
 NSE_GSM = "https://www.nseindia.com/api/reportGSM"
 KITE_MARGINS = "https://api.kite.trade/margins/equity"
+BHAV_URL = "https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_%s.csv"
+UPSTOX_URL = "https://api.upstox.com/v2/historical-candle/"
+DEFAULT_CACHE = "trader/cache/bhavcopy"
 SPARK_MAX = 20      # Yahoo's spark answers 400 above 20 symbols
 PAUSE = 0.3         # seconds between requests: be polite to free endpoints
 BACKOFF = 5.0       # seconds to wait before the one retry after a 429
@@ -692,6 +695,132 @@ def fetch_spark(symbols, rng, interval, pause, a=None):
     return data, failed
 
 
+def bhav_days(now_utc, n=MIN_DAILY_BARS + 10):
+    """The last n NSE trading days up to today (IST), oldest first."""
+    d, out = to_ist(now_utc).date(), []
+    for _ in range(n * 2 + 10):
+        if trading_day(d)[0]:
+            out.append(d)
+            if len(out) == n:
+                break
+        d -= datetime.timedelta(days=1)
+    return sorted(out)
+
+
+def parse_bhav(text):
+    """sec_bhavdata_full csv -> {SYMBOL: (close, qty)} for series EQ. NSE's header names carry leading spaces."""
+    out = {}
+    for r in csv.DictReader(io.StringIO(text.replace("\r", ""))):
+        r = {(k or "").strip(): (v or "").strip() for k, v in r.items()}
+        if r.get("SERIES") == "EQ":
+            try:
+                out[r["SYMBOL"]] = (float(r["CLOSE_PRICE"]), int(float(r["TTL_TRD_QNTY"])))
+            except (KeyError, ValueError):
+                pass
+    return out
+
+
+def fetch_bhav(symbols, now_utc, a):
+    """Daily closes from NSE's own end-of-day files (one per trading day, cached) -> ({SYM: series}, {SYM: why}).
+    Today's file appears in the evening, so before then the newest close is the last session's."""
+    cache = a.cache
+    os.makedirs(cache, exist_ok=True)
+    days, got = bhav_days(now_utc), []
+    for k, d in enumerate(days):
+        path = os.path.join(cache, "bhav-%s.csv" % d.isoformat())
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        else:
+            if k and a.pause:
+                SLEEP(a.pause)
+            try:
+                text = http_get(BHAV_URL % d.strftime("%d%m%Y"))
+            except (urllib.error.URLError, OSError):
+                continue  # not published (today before the evening) or a surprise holiday
+            if not text.startswith("SYMBOL"):
+                continue
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        got.append((d, parse_bhav(text)))
+    if len(got) < MIN_DAILY_BARS:
+        raise ScanError("only %d bhavcopy files could be read (need %d): try again after 7 PM IST or check nseindia.com"
+                        % (len(got), MIN_DAILY_BARS))
+    data, failed = {}, {}
+    for sym in symbols:
+        t, c = [], []
+        for d, rows in got:
+            if sym in rows:
+                t.append(int((datetime.datetime.combine(d, datetime.time(12, 0)) - datetime.datetime(1970, 1, 1)).total_seconds()))
+                c.append(rows[sym][0])
+        if not c:
+            failed[sym] = "not an EQ-series stock in NSE's files"
+            continue
+        last = got[-1][1].get(sym)
+        data[sym] = {"t": t, "c": c, "o": None, "h": None, "l": None, "v": None,
+                     "meta": {"regularMarketPrice": c[-1], "regularMarketVolume": last[1] if last else None}}
+    return data, failed
+
+
+def isin_map():
+    """SYMBOL -> ISIN from EQUITY_L.csv (Upstox keys instruments by ISIN)."""
+    rd = csv.DictReader(io.StringIO(http_get(NSE_EQUITY_L, timeout=60).replace("\r", "")))
+    return {(r.get("SYMBOL") or "").strip(): (r.get(" ISIN NUMBER") or r.get("ISIN NUMBER") or "").strip() for r in rd}
+
+
+def agg5(candles):
+    """Upstox 1-minute candles [[iso, o, h, l, c, v, oi], ...] (newest first) -> a series of 5-minute bars."""
+    buckets = {}
+    for c in candles:
+        dt = datetime.datetime.fromisoformat(c[0])
+        mins = dt.hour * 60 + dt.minute
+        start = dt.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(
+            minutes=mins - (mins - (OPEN.hour * 60 + OPEN.minute)) % BAR_MIN)
+        buckets.setdefault(start, []).append((dt, c))
+    t, o, h, l, cl, v = [], [], [], [], [], []
+    for start in sorted(buckets):
+        rows = [c for _, c in sorted(buckets[start], key=lambda x: x[0])]
+        t.append(int(start.timestamp()))
+        o.append(rows[0][1])
+        h.append(max(r[2] for r in rows))
+        l.append(min(r[3] for r in rows))
+        cl.append(rows[-1][4])
+        v.append(sum(r[5] or 0 for r in rows))
+    return {"t": t, "c": cl, "o": o, "h": h, "l": l, "v": v, "meta": {}}
+
+
+def fetch_upstox(symbols, day, today, a):
+    """5-minute bars with real highs and lows, built from Upstox's keyless 1-minute candles, one request a symbol."""
+    try:
+        isins = isin_map()
+    except (urllib.error.URLError, OSError) as e:
+        raise ScanError("could not read NSE's symbol master for ISINs: %s" % getattr(e, "reason", e))
+    data, failed = {}, {}
+    for k, sym in enumerate(symbols):
+        isin = isins.get(sym)
+        if not isin:
+            failed[sym] = "no ISIN in EQUITY_L.csv"
+            continue
+        if k and a.pause:
+            SLEEP(a.pause)
+        key = "NSE_EQ%7C" + isin
+        url = (UPSTOX_URL + "intraday/%s/1minute" % key) if day == today else (
+            UPSTOX_URL + "%s/1minute/%s/%s" % (key, day.isoformat(), day.isoformat()))
+        try:
+            candles = json.loads(http_get(url))["data"]["candles"]
+            if not candles:
+                failed[sym] = "no candles from Upstox"
+                continue
+            data[sym] = agg5(candles)
+        except urllib.error.HTTPError as e:
+            failed[sym] = "Upstox answered HTTP %d" % e.code
+        except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+            failed[sym] = "Upstox: %s" % getattr(e, "reason", e)
+        if (k + 1) % 100 == 0:
+            progress(a, "  upstox %d of %d symbols" % (k + 1, len(symbols)))
+    return data, failed
+
+
 def read_symbols(a, offline_syms=None):
     if a.symbols:
         syms = [re.sub(r"\.NS$", "", s) for s in re.split(r"[,\s]+", a.symbols.upper()) if s]
@@ -830,10 +959,18 @@ def cmd_daily(a):
         data, failed = load_offline(a.offline)
         offline_syms = sorted(set(data) | set(failed))
     symbols = read_symbols(a, offline_syms)
+    used = "yahoo.ns"
     if not a.offline:
-        progress(a, "Fetching daily closes for %s symbols (%d spark requests)..."
-                 % ("{:,}".format(len(symbols)), (len(symbols) + SPARK_MAX - 1) // SPARK_MAX))
-        data, failed = fetch_spark(symbols, "3mo", "1d", a.pause, a)
+        data, failed = {}, {}
+        if a.source in ("yahoo", "auto"):
+            progress(a, "Fetching daily closes for %s symbols (%d spark requests)..."
+                     % ("{:,}".format(len(symbols)), (len(symbols) + SPARK_MAX - 1) // SPARK_MAX))
+            data, failed = fetch_spark(symbols, "3mo", "1d", a.pause, a)
+        if a.source == "bhavcopy" or (a.source == "auto" and not data):
+            progress(a, "%s: reading NSE end-of-day files (bhavcopy)..." % (
+                "Yahoo gave nothing" if a.source == "auto" else "Source bhavcopy"))
+            data, failed = fetch_bhav(symbols, now, a)
+            used = "nse-bhavcopy"
     hits, counts, last_date = scan_daily(data, symbols, now, a.min_price, a.min_volume)
     if not counts["fetched"]:
         raise ScanError("no charts came back (%s)" % next(iter(failed.values()), "no answer"))
@@ -841,7 +978,7 @@ def cmd_daily(a):
     as_of = ("%s close" % last_date.isoformat()) if last_date else None
     doc = {"created_by": "trader-in-scanner", "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "mode": "daily",
            "as_of": as_of, "universe": len(symbols), "scanned": counts["scanned"], "failed": nfailed,
-           "source": "yahoo.ns", "filters": {"min_price": a.min_price, "min_volume": a.min_volume},
+           "source": used, "filters": {"min_price": a.min_price, "min_volume": a.min_volume},
            "note": NOTE, "hits": hits}
     if a.offline:
         doc["offline"] = os.path.basename(a.offline.rstrip("/"))
@@ -851,8 +988,9 @@ def cmd_daily(a):
         print(json.dumps(dict(doc, counts=counts, seconds=round(time.time() - t0, 1)), indent=2))
         return 0 if hits else 1
     local = to_ist(now)
-    print("Daily scan, %s IST, closes through %s (Yahoo spark, daily closes only)." % (
-        local.strftime("%a %Y-%m-%d %H:%M"), last_date.isoformat() if last_date else "nothing"))
+    print("Daily scan, %s IST, closes through %s (%s, daily closes only)." % (
+        local.strftime("%a %Y-%m-%d %H:%M"), last_date.isoformat() if last_date else "nothing",
+        "NSE bhavcopy" if used == "nse-bhavcopy" else "Yahoo spark"))
     print("Fetched %s of %s charts%s. %s passed the liquidity filter (Rs %s+ and %s+ shares)%s; "
           "%s scanned." % ("{:,}".format(counts["fetched"]), "{:,}".format(len(symbols)),
                            (" (%s failed or had no data)" % "{:,}".format(nfailed)) if nfailed else "",
@@ -904,7 +1042,8 @@ def cmd_orb(a):
     day, cutoff = orb_window(now, at, a.or_minutes, until, explicit_day)
     symbols = read_symbols(a, offline_syms)
     confirm = None
-    if not a.offline:
+    used = "yahoo.ns"
+    if not a.offline and a.source != "upstox":
         today = to_ist(parse_now(None)).date()
         if (today - day).days > 6:
             raise ScanError("Yahoo's free 5-minute history is short: replay %s with --offline" % day.isoformat())
@@ -921,6 +1060,12 @@ def cmd_orb(a):
             if len(done) % 50 == 0:
                 progress(a, "  stage 2: %d v8 charts so far" % len(done))
             return parse_chart(yahoo_get(chart_path(sym, rng, "%dm" % BAR_MIN)), sym)
+    if not a.offline and (a.source == "upstox" or (a.source == "auto" and not data)):
+        progress(a, "%s: building 5-minute bars from Upstox 1-minute candles (one request a symbol)..." % (
+            "Yahoo gave nothing" if a.source == "auto" else "Source upstox"))
+        data, failed = fetch_upstox(symbols, day, to_ist(parse_now(None)).date(), a)
+        confirm = None  # these bars already carry real highs and lows
+        used = "upstox"
     hits, counts, failed2 = scan_orb(data, symbols, day, cutoff, a.or_minutes, a.min_price, a.min_volume, confirm,
                                      a.max_confirm)
     failed = dict(failed or {})
@@ -929,7 +1074,7 @@ def cmd_orb(a):
     as_of = "%s %s IST" % (day.isoformat(), cutoff.strftime("%H:%M"))
     doc = {"created_by": "trader-in-scanner", "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "mode": "orb",
            "as_of": as_of, "universe": len(symbols), "scanned": counts["scanned"], "failed": nfailed,
-           "unconfirmed": counts["unconfirmed"], "source": "yahoo.ns", "or_minutes": a.or_minutes,
+           "unconfirmed": counts["unconfirmed"], "source": used, "or_minutes": a.or_minutes,
            "interval": "%dm" % BAR_MIN,
            "filters": {"min_price": a.min_price, "min_volume": a.min_volume}, "note": NOTE, "hits": hits}
     if a.offline:
@@ -939,8 +1084,9 @@ def cmd_orb(a):
     if a.json:
         print(json.dumps(dict(doc, counts=counts, seconds=round(time.time() - t0, 1)), indent=2))
         return 0 if hits else 1
-    print("Opening-range breakout scan, %s %s IST: %d-minute range (9:15 to %s), 5-minute bars, Yahoo."
-          % (day_label(day), clock_label(cutoff), a.or_minutes, clock_label(slot(day, a.or_minutes // BAR_MIN))))
+    print("Opening-range breakout scan, %s %s IST: %d-minute range (9:15 to %s), 5-minute bars, %s."
+          % (day_label(day), clock_label(cutoff), a.or_minutes, clock_label(slot(day, a.or_minutes // BAR_MIN)),
+             "Upstox 1-minute candles" if used == "upstox" else "Yahoo"))
     print("Fetched %s of %s charts%s; %s usable%s; %s candidates, %s confirmed with real highs and lows."
           % ("{:,}".format(counts["fetched"]), "{:,}".format(len(symbols)),
              (" (%s failed or had no data)" % "{:,}".format(nfailed)) if nfailed else "",
@@ -1003,9 +1149,14 @@ def main(argv=None):
 
     p = sub.add_parser("daily", help="pre-market setups from daily closes")
     common(p, 20.0, 500000)
+    p.add_argument("--source", choices=["auto", "yahoo", "bhavcopy"], default="auto",
+                   help="auto = Yahoo, then NSE bhavcopy files if Yahoo gives nothing")
+    p.add_argument("--cache", default=DEFAULT_CACHE, help="where bhavcopy files are kept (%s)" % DEFAULT_CACHE)
     p = sub.add_parser("orb", help="opening-range breakouts so far today")
     common(p, 20.0, 0)
     p.add_argument("--or-minutes", type=int, default=15)
+    p.add_argument("--source", choices=["auto", "yahoo", "upstox"], default="auto",
+                   help="auto = Yahoo, then Upstox 1-minute candles if Yahoo gives nothing")
     p.add_argument("--max-confirm", type=int, default=MAX_CONFIRM,
                    help="v8 charts to fetch in stage 2, most traded first (%d; 0 = all)" % MAX_CONFIRM)
     p.add_argument("--at", help="cut the clock at this IST time, HH:MM")

@@ -2,7 +2,7 @@
 
 11 Claude skills for day trading on the NSE: scan the market for setups, track announcements, time every entry and exit, replay every outcome before you risk a rupee, and size and check orders before they reach Zerodha.
 
-Free, MIT, no signup, no API key. The tools are plain Python that read free public data: NSE's own files and filings (EQUITY_L, ASM/GSM lists, corporate announcements, XBRL results, bulk/block deals, SEBI insider and SAST filings, FII/DII flows), Zerodha's public margin file, Google News and Yahoo Finance charts (`SYMBOL.NS`).
+Free, MIT, no signup, no API key. The tools are plain Python that read free public data: NSE's own files and filings (EQUITY_L, ASM/GSM lists, corporate announcements, XBRL results, bulk/block deals, SEBI insider and SAST filings, FII/DII flows), Zerodha's public margin file, NSE end-of-day files (bhavcopy), Upstox's keyless candles, Google News and Yahoo Finance charts (`SYMBOL.NS`).
 
 > **Derived from [Jake Schincariol's day-trader-skill](https://github.com/Jakeschincariol/day-trader-skill)** (MIT), the US version of this pack. The method, the structure and most of the code are his; this repo changes the market, clock, rules, costs, data sources and broker for India. The skills here are named `trader-in-*` so they can sit next to the US `trader-*` skills. Both copyright notices are in `LICENSE`.
 
@@ -94,8 +94,8 @@ All standard-library Python.
 
 ```bash
 python3 trader-in-scanner/scan.py universe                              # NSE EQ stocks, minus ASM/GSM, MIS-eligible
-python3 trader-in-scanner/scan.py daily                                 # pre-market setups
-python3 trader-in-scanner/scan.py orb --at 10:00                        # opening-range breakouts so far
+python3 trader-in-scanner/scan.py daily                                 # pre-market setups (Yahoo, else NSE bhavcopy)
+python3 trader-in-scanner/scan.py orb --at 10:00                        # opening-range breakouts so far (Yahoo, else Upstox)
 python3 trader-in-news/news.py --tickers RELIANCE M\&M --hours 12       # announcements, headlines, upcoming results
 python3 trader-in-entry/entry.py check RELIANCE --setup orb
 python3 trader-in-exit/exit.py plan --symbol RELIANCE --entry 1167.40 --or-high 1170.3 --or-low 1160.15 --write
@@ -108,7 +108,7 @@ python3 trader-in-analyst/facts.py RELIANCE TCS                         # quarte
 python3 trader-in-insiders/flows.py deals                               # bulk and block deals
 ```
 
-There is no automated test suite yet. The tools were checked by running them live against NSE where it answered, and offline on synthetic bars for the entry, exit, budget, risk, broker and time machine chain. Yahoo returned HTTP 429 from the test host, so the Yahoo-based fetches (`.NS` charts) have not been run live.
+There is no automated test suite yet. The tools were checked by running them live against NSE where it answered, and offline on synthetic bars for the entry, exit, budget, risk, broker and time machine chain. Yahoo returned HTTP 429 from the test host, so the Yahoo fetches have not been run live. The scanner falls back automatically: the daily scan then reads NSE bhavcopy files (run live on the Nifty 50) and the opening-range scan builds 5-minute bars from Upstox's keyless 1-minute candles (run live on a replay of 29 Oct). Upstox is one request per symbol, so scan a short list with it.
 
 ## Fine print
 
@@ -120,7 +120,7 @@ There is no automated test suite yet. The tools were checked by running them liv
 
 **Intraday has no bracket or OCO order on Kite.** Do not rest the stop and the target as two sells on the same MIS shares: both could fill and leave you short.
 
-**The Time Machine is a simulation, not a prediction.** A stop is a plan, not a guarantee. The data is free and unofficial: Yahoo, NSE's website JSON and Google News can lag, change, or refuse requests, and NSE's terms on scripted access were not found.
+**The Time Machine is a simulation, not a prediction.** A stop is a plan, not a guarantee. The data is free and unofficial: Yahoo, Upstox's keyless endpoint, NSE's website JSON and Google News can lag, change, or refuse requests, and NSE's terms on scripted access were not found.
 
 **Calendar and rules to keep current.** The holiday list covers 2026. The closing-auction timings (from 3 Aug 2026 for F&O stocks, from 7 Dec 2026 for all) and the tick size above Rs 1,000 come from secondary sources or are assumed; check NSE's circulars.
 
