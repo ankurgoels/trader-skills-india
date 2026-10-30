@@ -127,8 +127,15 @@ def quarters(symbol, standalone=False, n=8, offline=None):
     return out
 
 
+NM = "n/m"  # not meaningful: the base year was a loss, or the change is over 1,000%
+
+
 def pct(a, b):
-    return None if a is None or not b else (a / b - 1) * 100
+    if a is None or not b:
+        return None
+    if b < 0 or abs(a / b - 1) * 100 > 1000:
+        return NM
+    return (a / b - 1) * 100
 
 
 def analyse(qs, today=None):
@@ -148,7 +155,7 @@ def analyse(qs, today=None):
                      "are missing from this feed. Check the company's announcements." % (newest, (today - newest).days))
     for q in qs[:2]:
         y = q["yoy"]
-        if y.get("eps") is not None and y.get("net_profit") is not None and abs(y["eps"] - y["net_profit"]) > 25:
+        if isinstance(y.get("eps"), float) and isinstance(y.get("net_profit"), float) and abs(y["eps"] - y["net_profit"]) > 25:
             notes.append("%s: EPS moved %+.0f%% but net profit %+.0f%%. A bonus issue or split changes the share count: "
                          "compare net profit, not EPS, unless the filing restates it." % (q["to"], y["eps"], y["net_profit"]))
     return qs, notes
@@ -159,7 +166,7 @@ def cr(v):
 
 
 def p(v):
-    return "n/a" if v is None else "%+.1f%%" % v
+    return "n/a" if v is None else v if v == NM else "%+.1f%%" % v
 
 
 def render(symbol, qs, notes, standalone):

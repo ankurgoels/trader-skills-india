@@ -46,6 +46,7 @@ No keys. NSE's JSON needs a browser User-Agent and a Referer; the script sends b
 - **Say when the data lags.** NSE's feed can trail a result that is already out. When the newest filing is more than 150 days old the tool prints a NOTE (on 29 Oct 2026 RELIANCE's newest filing in the feed was the quarter ended Dec 2024): check the company's announcements before summarising.
 - **Bonus issues and splits.** EPS is per share. When EPS moves very differently from net profit the tool says so; compare net profit unless the filing restates EPS.
 - **Flag one-offs.** Net profit can include exceptional items and tax effects. Banks and NBFCs report differently (interest income, not "revenue from operations" in the same sense): say the table may not fit them, and read the filing.
+- **n/m.** The year-on-year column shows `n/m` (not meaningful) when the year-ago figure was a loss or the change is over 1,000%: a company that just turned profitable has no sensible percentage. Say "swung to a profit" instead.
 - **Compare like with like.** Quarter-on-quarter changes mislead for seasonal businesses; use the year-on-year column.
 
 ## Steps
