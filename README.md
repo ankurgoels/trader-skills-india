@@ -8,3 +8,7 @@ Each folder is a skill (`SKILL.md` plus a standard-library Python tool). Copy th
 - Zerodha has no paper account: `"paper": true` is a dry run and nothing is sent to the broker.
 - Calendar is 2026 only (add NSE's 2027 list when published). Tick size above Rs 1,000 (Rs 0.10) is assumed.
 - Research and open items: `docs/research-report.md`.
+
+## License
+
+MIT, see `LICENSE`.
