@@ -161,6 +161,6 @@ into the pool.
 
 ## NSE notes
 
-- Yahoo `.NS` 5-minute history is about 60 days. A full session is 75 bars (9:15 to 15:25 starts). From 3 Aug 2026 F&O stocks stop continuous trading at 15:15 for a closing auction, so their late bars may be missing and fewer sessions may count as full; if the tool says too few sessions, that is why.
+- Yahoo `.NS` 5-minute history is about 60 days. A full session is 75 bars (9:15 to 15:25 starts). Since 3 Aug 2026 F&O stocks stop continuous trading at 15:15 for a closing auction, and Yahoo's bars after 15:10 are auction prints with gaps (72 to 74 bars a day). The tool accepts any session whose bars up to 15:10 are complete and pads the last three slots flat, so replays must end by 15:15 (`--until 15:10`, the default flat-by); a later `--until` is refused when padded sessions are in the pool.
 - The data source is Yahoo, which often answers 429 from some hosts. Wait and retry, or replay a saved file with `--offline`.
 - Stops round to the stock's tick (Rs 0.01 under 250, 0.05 to 1,000, 0.10 above, the last assumed).

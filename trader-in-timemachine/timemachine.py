@@ -83,6 +83,7 @@ BACKOFF = 5.0        # seconds to wait once after a 429
 HOSTS = ("query2", "query1")
 INTERVAL = 300       # 5-minute bars, in seconds
 SESSION_BARS = 75    # 9:15 to 15:30 in 5-minute bars
+CAS_BARS = 72        # F&O stocks stop continuous trading at 15:15 (closing auction) from 3 Aug 2026: 9:15 to 15:10 starts
 OPEN_MIN = 9 * 60 + 15
 CLOSE_MIN = 15 * 60 + 30
 MIN_SESSIONS = 20
@@ -161,7 +162,7 @@ def clock24(minutes):
 
 def chart_url(sym, host="query2"):
     return "https://%s.finance.yahoo.com/v8/finance/chart/%s?range=60d&interval=5m" % (
-        host, urllib.parse.quote(sym.upper().replace(".", "-")))
+        host, urllib.parse.quote(sym.upper() + ".NS"))
 
 
 def _sleep(seconds):
@@ -299,6 +300,11 @@ def full_sessions(days, before):
         s = days[d]
         if len(s) == SESSION_BARS:
             full.append((d, [s[i] for i in range(SESSION_BARS)]))
+        elif all(i in s for i in range(CAS_BARS)):
+            # closing-auction session (bars after 15:10 are auction prints, some missing): pad the last three slots flat so indexes line up; replays must end by 15:15
+            p = s[CAS_BARS - 1]["c"]
+            pad = [dict(s[CAS_BARS - 1], o=p, h=p, l=p, c=p, v=0, pad=True) for _ in range(SESSION_BARS - CAS_BARS)]
+            full.append((d, [s[i] for i in range(CAS_BARS)] + pad))
         else:
             short.append({"date": d, "bars": len(s)})
     return full, short
@@ -681,6 +687,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
         raise TMError("--until must be on the 5-minute grid and no later than %s%s"
                       % (clock12(end_min), " (an early close)" if early else ""))
     last = (until_min - OPEN_MIN) // 5 - 1
+    padded_note = until_min > OPEN_MIN + CAS_BARS * 5
     if last <= k:
         raise TMError("--until %s leaves nothing to replay after the %s entry" % (clock12(until_min),
                                                                              plan["entry_time"]))
@@ -700,6 +707,9 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     if len(sessions) < MIN_SESSIONS:
         raise TMError("only %d full session(s) of %s before %s in the data; the time machine needs at least %d"
                       % (len(sessions), sym, plan["date"], MIN_SESSIONS))
+    if padded_note and any(D[-1].get("pad") for _, D in sessions):
+        raise TMError("some of the %s sessions are closing-auction days with no continuous trading after 15:15: "
+                      "use --until 15:10 or earlier" % sym)
     pool = build_pool(sessions)
     mc = simulate(pool, plan["entry"], plan["stop"], plan["target"], k, last, replays, seed, window, plan["side"])
     mc = dict(mc, until=clock24(until_min), pool_sessions=len(sessions), pool_from=sessions[0][0],
