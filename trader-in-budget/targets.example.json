@@ -1,0 +1,11 @@
+{
+  "source": "Illustrative example only: five large NSE stocks, weights made up for the demo",
+  "as_of": "2026-10-28",
+  "weights": [
+    {"ticker": "RELIANCE", "name": "Reliance Industries", "weight": 30.67, "pct_of_13f": 22.04},
+    {"ticker": "HDFCBANK", "name": "HDFC Bank", "weight": 23.85, "pct_of_13f": 17.14},
+    {"ticker": "INFY", "name": "Infosys", "weight": 17.56, "pct_of_13f": 12.62},
+    {"ticker": "ITC", "name": "ITC", "weight": 15.11, "pct_of_13f": 10.86},
+    {"ticker": "TCS", "name": "Tata Consultancy Services", "weight": 12.80, "pct_of_13f": 9.20}
+  ]
+}
