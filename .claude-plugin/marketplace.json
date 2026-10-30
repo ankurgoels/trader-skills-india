@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "trader-skills-india",
+  "description": "The day-trader-skill pack adapted for the Indian market (NSE, IST, rupees, Zerodha)",
+  "owner": {"name": "trader-skills-india contributors"},
+  "plugins": [
+    {
+      "name": "trader-skills-india",
+      "description": "Eleven Claude skills for NSE day trading: a chart scanner, a news monitor, an entry timer, an exit planner, a time machine that replays 10,000 sessions, a risk manager, a budget manager, an order executor (dry run by default, never without your yes), price alerts, an earnings analyst and an insider and institutional flow tracker.",
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/ankurgoels/trader-skills-india"
+    }
+  ]
+}

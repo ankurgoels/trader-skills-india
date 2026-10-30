@@ -1,0 +1,10 @@
+{
+  "name": "trader-skills-india",
+  "description": "11 Claude skills for day trading on the NSE: scan the market for setups, track announcements, time every entry and exit, replay every outcome, and size and check orders before they reach Zerodha. A derivative of Jake Schincariol's day-trader-skill (MIT).",
+  "version": "0.1.0",
+  "homepage": "https://github.com/ankurgoels/trader-skills-india",
+  "repository": "https://github.com/ankurgoels/trader-skills-india",
+  "license": "MIT",
+  "keywords": ["claude-code", "claude-skills", "day-trading", "nse", "india", "zerodha", "opening-range-breakout"],
+  "skills": "./"
+}

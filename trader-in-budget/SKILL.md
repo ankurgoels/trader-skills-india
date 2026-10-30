@@ -31,7 +31,7 @@ python3 "${CLAUDE_SKILL_DIR}/size.py"                        # trader/plan.json 
 python3 "${CLAUDE_SKILL_DIR}/size.py" --write                # write trader/orders.json
 python3 "${CLAUDE_SKILL_DIR}/size.py" --limit --write        # a limit order at the plan's entry
 python3 "${CLAUDE_SKILL_DIR}/size.py" --limit 364.00 --json  # a limit order at 364.00
-python3 "${CLAUDE_SKILL_DIR}/size.py" --weights AAPL=40,KO=60 --config split.json   # weights mode, below
+python3 "${CLAUDE_SKILL_DIR}/size.py" --weights RELIANCE=40,ITC=60 --config split.json   # weights mode, below
 ```
 
 `--now "2026-10-19 10:15"` pins the clock (IST). A plan for
